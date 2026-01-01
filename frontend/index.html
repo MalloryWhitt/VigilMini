@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Vigil Mini — Senate LDA Influence Graph</title>
+
+    <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <link
+      href="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.css"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        --bg: #0b0f1a;
+        --panel: rgba(255, 255, 255, 0.92);
+        --text: #111;
+        --muted: #555;
+        --border: #ddd;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial,
+          sans-serif;
+        background: var(--bg);
+      }
+
+      #top {
+        padding: 18px 18px 0 18px;
+        color: white;
+      }
+
+      #top h1 {
+        margin: 0 0 8px 0;
+        font-size: 22px;
+        font-weight: 650;
+      }
+
+      #top p {
+        margin: 0 0 14px 0;
+        max-width: 980px;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      #controls {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        z-index: 10;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        width: 420px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      select,
+      input,
+      button {
+        width: 100%;
+        padding: 9px 10px;
+        border: 1px solid #cfcfcf;
+        border-radius: 10px;
+        font-size: 14px;
+        background: white;
+        color: var(--text);
+        box-sizing: border-box;
+      }
+
+      button {
+        cursor: pointer;
+        background: #f3f3f3;
+      }
+
+      button:hover {
+        background: #eaeaea;
+      }
+
+      #meta {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.25;
+      }
+
+      #error {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid #f0b5b5;
+        background: #fff1f1;
+        color: #7a1b1b;
+        display: none;
+        white-space: pre-wrap;
+      }
+
+      #network {
+        width: 100vw;
+        height: 72vh;
+        margin-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.14);
+      }
+
+      #footer {
+        padding: 12px 18px 18px 18px;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 12px;
+      }
+
+      #footer code {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="top">
+      <h1>Vigil Mini — Influence Graph Explorer (Senate LDA)</h1>
+      <p>
+        Lobbying disclosures contain structured relationships between
+        <b>registrants</b> (lobbying firms), <b>clients</b> (who they
+        represent), and <b>lobbyists</b> (people working those filings). Vigil
+        Mini uses the official Senate LDA filings API to help researchers and
+        the public explore influence networks through visualization.
+      </p>
+    </div>
+
+    <div id="controls">
+      <div class="row">
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="sample">Sample (latest filings)</option>
+            <option value="entity">
+              Search by Entity (client/registrant/lobbyist)
+            </option>
+            <option value="topic">Search by Topic (filing issues text)</option>
+          </select>
+        </div>
+        <div>
+          <label for="limit">Limit (page_size)</label>
+          <input id="limit" type="number" value="50" min="1" max="100" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="q">Query (entity or topic)</label>
+          <input
+            id="q"
+            type="text"
+            placeholder="Try: INTEL, VAN SCOYOC, semiconductor, privacy..."
+          />
+        </div>
+        <div>
+          <label for="year">Filing Year (optional)</label>
+          <input id="year" type="number" placeholder="e.g., 2024" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="includeLobbyists">Include lobbyists</label>
+          <select id="includeLobbyists">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+        </div>
+        <div>
+          <label for="go">&nbsp;</label>
+          <button id="go">Load Graph</button>
+        </div>
+      </div>
+
+      <div id="meta">Ready.</div>
+      <div id="error"></div>
+    </div>
+
+    <div id="network"></div>
+
+    <div id="footer">
+      Backend endpoints:
+      <code>/api/v1/graph/sample</code>, <code>/api/v1/graph/entity</code>,
+      <code>/api/v1/graph/topic</code>. You can also inspect API docs at
+      <code>/docs</code>.
+    </div>
+
+    <script>
+      let network, nodesDS, edgesDS;
+
+      function showError(msg) {
+        const el = document.getElementById("error");
+        el.style.display = "block";
+        el.textContent = msg;
+      }
+
+      function clearError() {
+        const el = document.getElementById("error");
+        el.style.display = "none";
+        el.textContent = "";
+      }
+
+      function setMeta(msg) {
+        document.getElementById("meta").textContent = msg;
+      }
+
+      function apiBase() {
+        // Same-origin by default. If you want to override, pass ?api=http://127.0.0.1:8000
+        const qs = new URLSearchParams(window.location.search);
+        return (qs.get("api") || "").replace(/\/$/, "");
+      }
+
+      function buildUrl() {
+        const base = apiBase();
+        const mode = document.getElementById("mode").value;
+        const limit = Number(document.getElementById("limit").value || 50);
+        const q = (document.getElementById("q").value || "").trim();
+        const year = (document.getElementById("year").value || "").trim();
+        const includeLobbyists =
+          document.getElementById("includeLobbyists").value;
+
+        let path = "";
+        if (mode === "sample") path = "/api/v1/graph/sample";
+        if (mode === "entity") path = "/api/v1/graph/entity";
+        if (mode === "topic") path = "/api/v1/graph/topic";
+
+        const params = new URLSearchParams();
+        params.set("limit", String(limit));
+        params.set("include_lobbyists", includeLobbyists);
+
+        if (mode !== "sample") {
+          params.set("q", q);
+        }
+
+        if (year) {
+          params.set("filing_year", year);
+        }
+
+        return `${base}${path}?${params.toString()}`;
+      }
+
+      function visOptions() {
+        return {
+          nodes: {
+            shape: "dot",
+            size: 16,
+            font: { size: 13 },
+          },
+          groups: {
+            client: { color: "#1f77b4" },
+            registrant: { color: "#ff7f0e" },
+            lobbyist: { color: "#2ca02c" },
+          },
+          interaction: {
+            hover: true,
+          },
+          physics: {
+            stabilization: { iterations: 200 },
+          },
+        };
+      }
+
+      function applyDim(selectedId) {
+        if (!network || !nodesDS) return;
+
+        const all = nodesDS.get();
+        const neighbors = new Set(network.getConnectedNodes(selectedId));
+        neighbors.add(selectedId);
+
+        const updates = [];
+        for (const n of all) {
+          const keep = neighbors.has(n.id);
+          // Use a reliable dim method: color override.
+          if (keep) {
+            updates.push({ id: n.id, color: undefined });
+          } else {
+            updates.push({ id: n.id, color: "rgba(200,200,200,0.15)" });
+          }
+        }
+        nodesDS.update(updates);
+
+        network.focus(selectedId, {
+          scale: 1.25,
+          animation: { duration: 450 },
+        });
+        network.selectNodes([selectedId]);
+      }
+
+      async function loadGraph() {
+        clearError();
+        const url = buildUrl();
+
+        const mode = document.getElementById("mode").value;
+        const q = (document.getElementById("q").value || "").trim();
+
+        if ((mode === "entity" || mode === "topic") && !q) {
+          showError("Query is required for entity/topic search.");
+          return;
+        }
+
+        setMeta(`Loading: ${url}`);
+
+        let res, text, data;
+        try {
+          res = await fetch(url);
+          text = await res.text();
+        } catch (e) {
+          showError("Network error while calling backend.\n\n" + String(e));
+          setMeta("Error.");
+          return;
+        }
+
+        if (!res.ok) {
+          showError(`Backend error (${res.status}).\n\n${text}`);
+          setMeta("Error.");
+          return;
+        }
+
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          showError("Backend returned non-JSON.\n\n" + text);
+          setMeta("Error.");
+          return;
+        }
+
+        nodesDS = new vis.DataSet(data.nodes || []);
+        edgesDS = new vis.DataSet(data.edges || []);
+
+        const container = document.getElementById("network");
+        network = new vis.Network(
+          container,
+          { nodes: nodesDS, edges: edgesDS },
+          visOptions()
+        );
+
+        network.once("stabilizationIterationsDone", () => {
+          network.setOptions({ physics: false });
+        });
+
+        network.on("click", (params) => {
+          if (params.nodes && params.nodes.length) {
+            applyDim(params.nodes[0]);
+          }
+        });
+
+        setMeta(
+          `Loaded ${nodesDS.length} nodes, ${
+            edgesDS.length
+          } edges. Filings matched: ${data.filings_matched ?? "?"}`
+        );
+      }
+
+      document.getElementById("go").addEventListener("click", loadGraph);
+
+      document.getElementById("mode").addEventListener("change", () => {
+        const mode = document.getElementById("mode").value;
+        document.getElementById("q").disabled = mode === "sample";
+      });
+
+      // initial state
+      document.getElementById("q").disabled = false;
+      loadGraph();
+    </script>
+  </body>
+</html>

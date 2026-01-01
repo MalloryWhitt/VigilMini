@@ -1,43 +1,44 @@
 import os
-import requests
+from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Vigil Mini")
+from app.routers.lda import router as lda_router
+
+load_dotenv()
+
+app = FastAPI(
+    title="Vigil Mini",
+    version="0.2.0",
+    description="Civic-tech tool for visualizing U.S. lobbying relationships via the Senate LDA API",
+)
+
+cors_origins_raw = os.getenv("CORS_ORIGINS", "*").strip()
+
+if cors_origins_raw == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=False,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def root():
     return {
         "name": "Vigil Mini",
-        "description": "Civic-tech tool for visualizing U.S. lobbying relationships",
-        "status": "running"
+        "description": "Influence graph explorer for the Senate LDA filings database",
+        "status": "running",
+        "docs": "/docs",
     }
 
 @app.get("/api/health")
 def health():
     return {"ok": True}
 
-@app.get("/api/lda/ping")
-def lda_ping():
-    """
-    Calls the Senate LDA API once and returns basic metadata.
-    Requires environment variable LDA_API_KEY.
-    """
-    api_key = os.getenv("LDA_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Missing LDA_API_KEY environment variable")
-
-    url = "https://lda.senate.gov/api/v1/filings/"
-    headers = {"Authorization": f"Token {api_key}"}
-
-    r = requests.get(url, headers=headers, params={"page_size": 1}, timeout=20)
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    data = r.json()
-    return {
-        "status": "ok",
-        "count": data.get("count"),
-        "next": data.get("next"),
-        "sample_keys": list((data.get("results") or [{}])[0].keys()),
-    }
+app.include_router(lda_router, prefix="/api/v1")
