@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vigil Mini — Explore</title>
+
+    <link rel="stylesheet" href="./assets/styles.css" />
+
+    <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <link
+      href="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.css"
+      rel="stylesheet"
+    />
+  </head>
+
+  <body>
+    <div id="navbar-root"></div>
+
+    <div class="container">
+      <div class="explore-wrap">
+        <div class="panel">
+          <h2>Search</h2>
+
+          <label class="label" for="mode">Mode</label>
+          <select id="mode" class="select">
+            <option value="sample">Sample (latest filings)</option>
+            <option value="entity">
+              Search by Entity (client / registrant / lobbyist)
+            </option>
+            <option value="topic">Search by Topic (filing issues text)</option>
+          </select>
+
+          <div class="row2">
+            <div>
+              <label class="label" for="limit">Limit</label>
+              <input
+                id="limit"
+                class="input"
+                type="number"
+                value="50"
+                min="1"
+                max="100"
+              />
+            </div>
+            <div>
+              <label class="label" for="year">Filing Year</label>
+              <input
+                id="year"
+                class="input"
+                type="number"
+                placeholder="e.g., 2021"
+              />
+            </div>
+          </div>
+
+          <label class="label" for="q">Query</label>
+          <input
+            id="q"
+            class="input"
+            type="text"
+            placeholder="INTEL, VAN SCOYOC, defense, privacy..."
+          />
+
+          <label class="label" for="includeLobbyists">Include lobbyists</label>
+          <select id="includeLobbyists" class="select">
+            <option value="true" selected>true</option>
+            <option value="false">false</option>
+          </select>
+
+          <div style="margin-top: 10px">
+            <button id="go" class="button">Load Graph</button>
+          </div>
+
+          <div class="meta" id="meta">Ready.</div>
+          <div class="error" id="error"></div>
+
+          <div class="meta" style="margin-top: 12px">
+            Tip: append
+            <code>?api=http://127.0.0.1:8000</code>
+            when running locally.
+          </div>
+        </div>
+
+        <div class="canvas">
+          <div id="network"></div>
+        </div>
+      </div>
+
+      <div class="footer">
+        Endpoints:
+        <code>/api/v1/graph/sample</code>, <code>/api/v1/graph/entity</code>,
+        <code>/api/v1/graph/topic</code>. API docs: <code>/docs</code>.
+      </div>
+    </div>
+
+    <script type="module">
+      import { initNavbar } from "./assets/navbar.js";
+
+      fetch("./assets/navbar.html")
+        .then((res) => res.text())
+        .then((html) => {
+          document.getElementById("navbar-root").innerHTML = html;
+          initNavbar();
+        })
+        .catch((err) => {
+          console.error("Failed to load navbar:", err);
+        });
+    </script>
+
+    <script>
+      let network, nodesDS, edgesDS;
+
+      function showError(msg) {
+        const el = document.getElementById("error");
+        el.style.display = "block";
+        el.textContent = msg;
+      }
+
+      function clearError() {
+        const el = document.getElementById("error");
+        el.style.display = "none";
+        el.textContent = "";
+      }
+
+      function setMeta(msg) {
+        document.getElementById("meta").textContent = msg;
+      }
+
+      function apiBase() {
+        const qs = new URLSearchParams(window.location.search);
+        return (qs.get("api") || "").replace(/\/$/, "");
+      }
+
+      function buildUrl() {
+        const base = apiBase();
+        const mode = document.getElementById("mode").value;
+        const limit = Number(document.getElementById("limit").value || 50);
+        const q = (document.getElementById("q").value || "").trim();
+        const year = (document.getElementById("year").value || "").trim();
+        const includeLobbyists =
+          document.getElementById("includeLobbyists").value;
+
+        let path = "";
+        if (mode === "sample") path = "/api/v1/graph/sample";
+        if (mode === "entity") path = "/api/v1/graph/entity";
+        if (mode === "topic") path = "/api/v1/graph/topic";
+
+        const params = new URLSearchParams();
+        params.set("limit", String(limit));
+        params.set("include_lobbyists", includeLobbyists);
+
+        if (mode !== "sample") params.set("q", q);
+        if (year) params.set("filing_year", year);
+
+        return `${base}${path}?${params.toString()}`;
+      }
+
+      function visOptions() {
+        return {
+          nodes: { shape: "dot", size: 16, font: { size: 13 } },
+          groups: {
+            client: { color: "#1f77b4" },
+            registrant: { color: "#ff7f0e" },
+            lobbyist: { color: "#2ca02c" },
+          },
+          interaction: { hover: true },
+          physics: { stabilization: { iterations: 250 } },
+        };
+      }
+
+      function applyDim(selectedId) {
+        if (!network || !nodesDS) return;
+
+        const neighbors = new Set(network.getConnectedNodes(selectedId));
+        neighbors.add(selectedId);
+
+        const updates = nodesDS.get().map((n) => ({
+          id: n.id,
+          color: neighbors.has(n.id) ? undefined : "rgba(200,200,200,0.15)",
+        }));
+
+        nodesDS.update(updates);
+
+        network.focus(selectedId, {
+          scale: 1.25,
+          animation: { duration: 450 },
+        });
+
+        network.selectNodes([selectedId]);
+      }
+
+      async function loadGraph() {
+        clearError();
+        const url = buildUrl();
+        const mode = document.getElementById("mode").value;
+        const q = (document.getElementById("q").value || "").trim();
+
+        if ((mode === "entity" || mode === "topic") && !q) {
+          showError("Query is required for entity/topic search.");
+          return;
+        }
+
+        setMeta(`Loading: ${url}`);
+
+        let res, text, data;
+        try {
+          res = await fetch(url);
+          text = await res.text();
+        } catch (e) {
+          showError("Network error while calling backend.\n\n" + String(e));
+          setMeta("Error.");
+          return;
+        }
+
+        if (!res.ok) {
+          showError(`Backend error (${res.status}).\n\n${text}`);
+          setMeta("Error.");
+          return;
+        }
+
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          showError("Backend returned non-JSON.\n\n" + text);
+          setMeta("Error.");
+          return;
+        }
+
+        nodesDS = new vis.DataSet(data.nodes || []);
+        edgesDS = new vis.DataSet(data.edges || []);
+
+        network = new vis.Network(
+          document.getElementById("network"),
+          { nodes: nodesDS, edges: edgesDS },
+          visOptions()
+        );
+
+        network.once("stabilizationIterationsDone", () => {
+          network.fit({ animation: { duration: 350 } });
+          network.setOptions({ physics: false });
+        });
+
+        network.on("click", (params) => {
+          if (params.nodes.length) applyDim(params.nodes[0]);
+        });
+
+        setMeta(
+          `Loaded ${nodesDS.length} nodes, ${
+            edgesDS.length
+          } edges. Filings matched: ${data.filings_matched ?? "?"}`
+        );
+      }
+
+      document.getElementById("go").addEventListener("click", loadGraph);
+
+      document.getElementById("mode").addEventListener("change", () => {
+        document.getElementById("q").disabled =
+          document.getElementById("mode").value === "sample";
+      });
+
+      loadGraph();
+    </script>
+  </body>
+</html>
