@@ -149,15 +149,55 @@
 
       function visOptions() {
         return {
-          nodes: { shape: "dot", size: 16, font: { size: 13 } },
-          groups: {
-            client: { color: "#1f77b4" },
-            registrant: { color: "#ff7f0e" },
-            lobbyist: { color: "#2ca02c" },
+          nodes: {
+            shape: "dot",
+            scaling: { min: 10, max: 42 }, // uses node.value
+            font: {
+              size: 14,
+              face: "system-ui",
+              strokeWidth: 3,
+              strokeColor: "rgba(0,0,0,0.55)",
+            },
           },
-          interaction: { hover: true },
-          physics: { stabilization: { iterations: 250 } },
+          edges: {
+            smooth: { type: "dynamic" },
+            font: { size: 0 }, // hide edge labels by default (tooltips still show)
+            color: { opacity: 0.3 },
+            arrows: { to: { enabled: true, scaleFactor: 0.55 } },
+            scaling: { min: 1, max: 10 }, // uses edge.value
+          },
+          groups: {
+            client: { color: { background: "#1f77b4", border: "#1f77b4" } },
+            registrant: { color: { background: "#ff7f0e", border: "#ff7f0e" } },
+            lobbyist: { color: { background: "#2ca02c", border: "#2ca02c" } },
+          },
+          interaction: {
+            hover: true,
+            tooltipDelay: 80,
+            hideEdgesOnDrag: true,
+            hideEdgesOnZoom: true,
+            navigationButtons: true,
+          },
+          physics: {
+            solver: "forceAtlas2Based",
+            forceAtlas2Based: {
+              gravitationalConstant: -50,
+              centralGravity: 0.01,
+              springLength: 130,
+              springConstant: 0.08,
+              damping: 0.6,
+              avoidOverlap: 1,
+            },
+            stabilization: { iterations: 300 },
+          },
         };
+      }
+
+      function resetDim() {
+        if (!nodesDS) return;
+        const updates = nodesDS.get().map((n) => ({ id: n.id, color: null }));
+        nodesDS.update(updates);
+        if (network) network.unselectAll();
       }
 
       function applyDim(selectedId) {
@@ -234,6 +274,14 @@
 
         network.on("click", (params) => {
           if (params.nodes.length) applyDim(params.nodes[0]);
+          else resetDim();
+        });
+
+        network.on("zoom", () => {
+          const scale = network.getScale();
+          network.setOptions({
+            nodes: { font: { size: scale > 0.9 ? 14 : 0 } },
+          });
         });
 
         setMeta(
@@ -250,6 +298,8 @@
           document.getElementById("mode").value === "sample";
       });
 
+      document.getElementById("q").disabled =
+        document.getElementById("mode").value === "sample";
       loadGraph();
     </script>
   </body>

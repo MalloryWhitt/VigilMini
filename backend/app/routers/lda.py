@@ -101,15 +101,20 @@ async def graph_sample(
     include_lobbyists: bool = Query(default=True),
     filters: FilingFilters = Depends(filters_dep),
 ):
+    base_filters = filters.to_query_params()
+    base_filters.setdefault("ordering", "-filing_dt_posted")
+
     filings = await lda_list_filings(
         page_size=limit,
-        extra_params=filters.to_query_params(),
+        extra_params=base_filters,
     )
     return build_graph_from_filings(
         filings=filings,
         include_lobbyists=include_lobbyists,
     )
 
+
+from math import ceil
 
 @router.get("/graph/entity", response_model=GraphResponse, response_model_by_alias=True)
 async def graph_search_entity(
@@ -119,33 +124,38 @@ async def graph_search_entity(
     filters: FilingFilters = Depends(filters_dep),
 ):
     base_filters = filters.to_query_params()
+    base_filters.setdefault("ordering", "-filing_dt_posted")
+
+    per = max(1, ceil(limit / 3))
 
     filings_client = await lda_list_filings(
-        page_size=limit,
+        page_size=per,
         extra_params={**base_filters, "client_name": q},
     )
     filings_reg = await lda_list_filings(
-        page_size=limit,
+        page_size=per,
         extra_params={**base_filters, "registrant_name": q},
     )
     filings_lob = await lda_list_filings(
-        page_size=limit,
+        page_size=per,
         extra_params={**base_filters, "lobbyist_name": q},
     )
 
-    # Dedupe by filing_uuid (keep the newest copy if duplicates exist)
     by_uuid: dict[str, dict] = {}
     for f in (filings_client + filings_reg + filings_lob):
         uid = (f.get("filing_uuid") or "").strip()
-        if not uid:
-            continue
-        by_uuid[uid] = f
+        if uid:
+            by_uuid[uid] = f
 
     filings = list(by_uuid.values())
+    filings.sort(key=lambda f: (f.get("filing_dt_posted") or ""), reverse=True)
+    filings = filings[:limit]
+
     return build_graph_from_filings(
         filings=filings,
         include_lobbyists=include_lobbyists,
     )
+
 
 
 @router.get("/graph/topic", response_model=GraphResponse, response_model_by_alias=True)
@@ -156,6 +166,7 @@ async def graph_search_topic(
     filters: FilingFilters = Depends(filters_dep),
 ):
     base_filters = filters.to_query_params()
+    base_filters.setdefault("ordering", "-filing_dt_posted")
 
     filings = await lda_list_filings(
         page_size=limit,
