@@ -7,36 +7,12 @@ def _shorten(name: str, max_len: int = 28) -> str:
     name = (name or "").strip()
     return name if len(name) <= max_len else name[: max_len - 1] + "…"
 
-def _parse_amount(value) -> float:
-    """
-    Attempt to parse reported amount from LDA payload.
-    Handles float/int, numeric strings, and strings with commas/$.
-    Returns 0.0 if missing/unparseable.
-    """
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        s = value.strip().replace("$", "").replace(",", "")
-        if not s:
-            return 0.0
-        try:
-            return float(s)
-        except ValueError:
-            return 0.0
-    return 0.0
-
-def _fmt_usd(x: float) -> str:
-    # Simple USD formatting without locale dependency
-    return f"${x:,.0f}"
-
 def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> dict:
     nodes: dict[str, dict] = {}
     node_degree: dict[str, int] = {}
 
     # Aggregate edges by (src, dst, relation)
-    # Each record: {"from":..., "to":..., "label":..., "count":..., "amount":...}
+    # Each record: {"from":..., "to":..., "label":..., "count":...}
     edge_agg: dict[tuple[str, str, str], dict] = {}
 
     def upsert_node(group: str, name: str) -> str:
@@ -51,7 +27,7 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
             }
         return nid
 
-    def add_edge(src_id: str, dst_id: str, relation: str, amount: float):
+    def add_edge(src_id: str, dst_id: str, relation: str):
         key = (src_id, dst_id, relation)
         rec = edge_agg.get(key)
         if rec is None:
@@ -60,12 +36,10 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
                 "to": dst_id,
                 "label": relation,
                 "count": 0,
-                "amount": 0.0,
             }
             edge_agg[key] = rec
 
         rec["count"] += 1
-        rec["amount"] += max(0.0, amount)
 
         node_degree[src_id] = node_degree.get(src_id, 0) + 1
         node_degree[dst_id] = node_degree.get(dst_id, 0) + 1
@@ -73,11 +47,6 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
     for filing in filings:
         client_name = ((filing.get("client") or {}).get("name") or "").strip()
         registrant_name = ((filing.get("registrant") or {}).get("name") or "").strip()
-
-        # IMPORTANT: verify actual field name in your LDA payload.
-        # Based on your filters schema, this is likely present as `filing_amount_reported`.
-        # If your payload uses a different key, change it here.
-        amount = _parse_amount(filing.get("filing_amount_reported"))
 
         client_id = reg_id = None
         if client_name:
@@ -90,7 +59,6 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
                 src_id=reg_id,
                 dst_id=client_id,
                 relation="represents",
-                amount=amount,
             )
 
         if include_lobbyists and reg_id:
@@ -103,7 +71,6 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
                     src_id=reg_id,
                     dst_id=lob_id,
                     relation="employs",
-                    amount=amount,
                 )
 
     # Node sizing: based on degree
@@ -111,24 +78,21 @@ def build_graph_from_filings(filings: list[dict], include_lobbyists: bool) -> di
         d = node_degree.get(nid, 0)
         n["value"] = max(1, d)
 
-    # Edge sizing: based on total amount (with a safe fallback to count)
+    # Edge sizing: based on filings count
     edges: list[dict] = []
     for rec in edge_agg.values():
-        amt = float(rec["amount"])
         cnt = int(rec["count"])
 
         # vis-network edge thickness uses `value`.
-        # Amounts can be huge; compress with sqrt-like scaling via power 0.5.
-        # Avoid importing math by using ** 0.5.
-        base = (amt ** 0.5) if amt > 0 else 0.0
-        value = max(1.0, base / 100.0)  # tune divisor to taste
+        value = max(1.0, float(cnt))
 
         edges.append({
             "from": rec["from"],
             "to": rec["to"],
             "label": rec["label"],
             "value": value,
-            "title": f"{rec['label']} • {cnt} filings • total {_fmt_usd(amt)}",
+            "count": cnt,
+            "title": f"{rec['label']} • {cnt} filings",
         })
 
     return {

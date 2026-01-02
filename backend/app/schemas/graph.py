@@ -4,6 +4,8 @@ class GraphNode(BaseModel):
     id: str
     label: str
     group: str
+    title: str | None = None
+    value: int | None = None
 
 class GraphEdge(BaseModel):
     # Allow population by field name OR alias during validation
@@ -13,6 +15,9 @@ class GraphEdge(BaseModel):
     from_: str = Field(alias="from")
     to: str
     label: str | None = None
+    title: str | None = None
+    value: float | None = None
+    count: int | None = None
 
 class GraphResponse(BaseModel):
     nodes: list[GraphNode]
@@ -24,4 +29,3 @@ class PingResponse(BaseModel):
     count: int | None = None
     next: str | None = None
     sample_keys: list[str]
-
