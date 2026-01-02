@@ -62,14 +62,102 @@
             placeholder="INTEL, VAN SCOYOC, defense, privacy..."
           />
 
-          <label class="label" for="includeLobbyists">Include lobbyists</label>
-          <select id="includeLobbyists" class="select">
-            <option value="true" selected>true</option>
-            <option value="false">false</option>
-          </select>
+          <div class="toggle">
+            <input id="includeLobbyists" type="checkbox" checked />
+            <label for="includeLobbyists">Show lobbyists</label>
+          </div>
 
-          <div style="margin-top: 10px">
+          <div class="button-row">
             <button id="go" class="button">Load Graph</button>
+          </div>
+
+          <div class="section">
+            <div class="section-title">What you’re looking at</div>
+            <div id="summary" class="summary">Ready.</div>
+            <div class="legend">
+              <div class="legend-item">
+                <span class="legend-dot client"></span>
+                <span>Client</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot registrant"></span>
+                <span>Registrant</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot lobbyist"></span>
+                <span>Lobbyist</span>
+              </div>
+            </div>
+            <div class="helper">
+              Registrant → Client = represents<br />
+              Registrant → Lobbyist = employs
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Explore controls</div>
+            <div class="button-row">
+              <button id="resetView" class="button button-ghost">
+                Reset view
+              </button>
+            </div>
+            <div class="find-row">
+              <input
+                id="findNode"
+                class="input"
+                type="text"
+                placeholder="Find node by name"
+              />
+              <button id="findBtn" class="button button-ghost">Find</button>
+            </div>
+            <button id="downloadPng" class="button button-ghost">
+              Download PNG
+            </button>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Filters</div>
+            <div class="toggle">
+              <input id="hideLeaf" type="checkbox" />
+              <label for="hideLeaf">Hide leaf nodes (degree = 1)</label>
+            </div>
+            <label class="label" for="minFilings">
+              Minimum filings per relationship
+            </label>
+            <select id="minFilings" class="select">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="5">5</option>
+            </select>
+            <label class="label" for="topN">Limit to top N nodes</label>
+            <select id="topN" class="select">
+              <option value="0" selected>All</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="150">150</option>
+            </select>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Top entities</div>
+            <div class="top-block">
+              <div class="top-title">Top registrants</div>
+              <ul id="topRegistrants" class="top-list"></ul>
+            </div>
+            <div class="top-block">
+              <div class="top-title">Top clients</div>
+              <ul id="topClients" class="top-list"></ul>
+            </div>
+            <div class="top-block">
+              <div class="top-title">Top lobbyists</div>
+              <ul id="topLobbyists" class="top-list"></ul>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Strongest relationships</div>
+            <ul id="topEdges" class="top-list"></ul>
           </div>
 
           <div class="meta" id="meta">Ready.</div>
@@ -97,7 +185,13 @@
     </script>
 
     <script>
-      let network, nodesDS, edgesDS;
+      let network, nodesDS, edgesDS, rawData;
+
+      const groupLabels = {
+        client: "Client",
+        registrant: "Registrant",
+        lobbyist: "Lobbyist",
+      };
 
       function showError(msg) {
         const el = document.getElementById("error");
@@ -115,6 +209,10 @@
         document.getElementById("meta").textContent = msg;
       }
 
+      function setSummary(html) {
+        document.getElementById("summary").innerHTML = html;
+      }
+
       function apiBase() {
         const qs = new URLSearchParams(window.location.search);
         return (qs.get("api") || "https://vigilmini.onrender.com").replace(
@@ -129,8 +227,9 @@
         const limit = Number(document.getElementById("limit").value || 50);
         const q = (document.getElementById("q").value || "").trim();
         const year = (document.getElementById("year").value || "").trim();
-        const includeLobbyists =
-          document.getElementById("includeLobbyists").value;
+        const includeLobbyists = document.getElementById(
+          "includeLobbyists"
+        ).checked;
 
         let path = "";
         if (mode === "sample") path = "/api/v1/graph/sample";
@@ -153,7 +252,7 @@
             shape: "dot",
             scaling: { min: 10, max: 42 }, // uses node.value
             font: {
-              size: 14,
+              size: 0,
               face: "system-ui",
               strokeWidth: 3,
               strokeColor: "rgba(0,0,0,0.55)",
@@ -162,9 +261,9 @@
           edges: {
             smooth: { type: "dynamic" },
             font: { size: 0 }, // hide edge labels by default (tooltips still show)
-            color: { opacity: 0.3 },
+            color: { opacity: 0.25 },
             arrows: { to: { enabled: true, scaleFactor: 0.55 } },
-            scaling: { min: 1, max: 10 }, // uses edge.value
+            scaling: { min: 1, max: 9 }, // uses edge.value
           },
           groups: {
             client: { color: { background: "#1f77b4", border: "#1f77b4" } },
@@ -181,14 +280,14 @@
           physics: {
             solver: "forceAtlas2Based",
             forceAtlas2Based: {
-              gravitationalConstant: -50,
-              centralGravity: 0.01,
-              springLength: 130,
-              springConstant: 0.08,
-              damping: 0.6,
-              avoidOverlap: 1,
+              gravitationalConstant: -80,
+              centralGravity: 0.02,
+              springLength: 140,
+              springConstant: 0.07,
+              damping: 0.5,
+              avoidOverlap: 1.2,
             },
-            stabilization: { iterations: 300 },
+            stabilization: { iterations: 400 },
           },
         };
       }
@@ -219,6 +318,264 @@
         });
 
         network.selectNodes([selectedId]);
+      }
+
+      function updateLabelVisibility() {
+        if (!network) return;
+        const scale = network.getScale();
+        network.setOptions({
+          nodes: { font: { size: scale > 1.05 ? 14 : 0 } },
+        });
+      }
+
+      function computeDegree(edges) {
+        const degree = {};
+        edges.forEach((edge) => {
+          degree[edge.from] = (degree[edge.from] || 0) + 1;
+          degree[edge.to] = (degree[edge.to] || 0) + 1;
+        });
+        return degree;
+      }
+
+      function applyFilters() {
+        if (!rawData) return;
+
+        const showLobbyists = document.getElementById("includeLobbyists")
+          .checked;
+        const minFilings = Number(
+          document.getElementById("minFilings").value || 1
+        );
+        const hideLeaf = document.getElementById("hideLeaf").checked;
+        const topN = Number(document.getElementById("topN").value || 0);
+
+        const nodeById = new Map(rawData.nodes.map((n) => [n.id, n]));
+        let filteredEdges = (rawData.edges || []).filter(
+          (edge) => (edge.count || 1) >= minFilings
+        );
+
+        if (!showLobbyists) {
+          filteredEdges = filteredEdges.filter((edge) => {
+            const fromGroup = nodeById.get(edge.from)?.group;
+            const toGroup = nodeById.get(edge.to)?.group;
+            return fromGroup !== "lobbyist" && toGroup !== "lobbyist";
+          });
+        }
+
+        let nodeIds = new Set();
+        filteredEdges.forEach((edge) => {
+          nodeIds.add(edge.from);
+          nodeIds.add(edge.to);
+        });
+
+        let filteredNodes = rawData.nodes.filter((node) =>
+          nodeIds.has(node.id)
+        );
+
+        let degree = computeDegree(filteredEdges);
+
+        if (topN > 0 && filteredNodes.length > topN) {
+          const ranked = [...filteredNodes].sort(
+            (a, b) => (degree[b.id] || 0) - (degree[a.id] || 0)
+          );
+          const keepIds = new Set(ranked.slice(0, topN).map((n) => n.id));
+          filteredNodes = filteredNodes.filter((n) => keepIds.has(n.id));
+          filteredEdges = filteredEdges.filter(
+            (edge) => keepIds.has(edge.from) && keepIds.has(edge.to)
+          );
+          degree = computeDegree(filteredEdges);
+        }
+
+        if (hideLeaf) {
+          const keepIds = new Set(
+            filteredNodes
+              .filter((node) => (degree[node.id] || 0) > 1)
+              .map((node) => node.id)
+          );
+          filteredNodes = filteredNodes.filter((node) =>
+            keepIds.has(node.id)
+          );
+          filteredEdges = filteredEdges.filter(
+            (edge) => keepIds.has(edge.from) && keepIds.has(edge.to)
+          );
+          degree = computeDegree(filteredEdges);
+        }
+
+        const nodes = filteredNodes.map((node) => {
+          const fullName = node.fullName || node.title || node.label;
+          const groupLabel = groupLabels[node.group] || node.group;
+          const d = degree[node.id] || 0;
+          return {
+            ...node,
+            value: Math.max(1, d),
+            title: `${fullName}<br/>${groupLabel}<br/>Degree: ${d}`,
+          };
+        });
+
+        const edges = filteredEdges.map((edge) => {
+          const count = edge.count || 1;
+          return {
+            ...edge,
+            value: edge.value || count,
+            title: edge.title || `${edge.label} • ${count} filings`,
+          };
+        });
+
+        updateSummaryText(rawData);
+        renderNetwork(nodes, edges);
+      }
+
+      function renderNetwork(nodes, edges) {
+        nodesDS = new vis.DataSet(nodes);
+        edgesDS = new vis.DataSet(edges);
+
+        const container = document.getElementById("network");
+        if (!network) {
+          network = new vis.Network(
+            container,
+            { nodes: nodesDS, edges: edgesDS },
+            visOptions()
+          );
+
+          network.on("click", (params) => {
+            if (params.nodes.length) applyDim(params.nodes[0]);
+            else resetDim();
+          });
+
+          network.on("zoom", updateLabelVisibility);
+        } else {
+          network.setData({ nodes: nodesDS, edges: edgesDS });
+        }
+
+        network.setOptions({ physics: { enabled: true } });
+        network.once("stabilizationIterationsDone", () => {
+          network.fit({ animation: { duration: 350 } });
+          updateLabelVisibility();
+          network.setOptions({ physics: false });
+        });
+      }
+
+      function renderTopList(id, items) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = "";
+        if (!items.length) {
+          el.innerHTML = "<li class=\"muted\">No data</li>";
+          return;
+        }
+        items.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = `${item.name} • ${item.count}`;
+          el.appendChild(li);
+        });
+      }
+
+      function updateInsights(data) {
+        const nodeById = new Map(data.nodes.map((n) => [n.id, n]));
+        const registrantCounts = new Map();
+        const clientCounts = new Map();
+        const lobbyistCounts = new Map();
+
+        data.edges.forEach((edge) => {
+          const fromNode = nodeById.get(edge.from);
+          const toNode = nodeById.get(edge.to);
+          if (!fromNode || !toNode) return;
+          if (edge.label === "represents") {
+            registrantCounts.set(
+              fromNode.id,
+              (registrantCounts.get(fromNode.id) || 0) + 1
+            );
+            clientCounts.set(
+              toNode.id,
+              (clientCounts.get(toNode.id) || 0) + 1
+            );
+          } else if (edge.label === "employs") {
+            registrantCounts.set(
+              fromNode.id,
+              (registrantCounts.get(fromNode.id) || 0) + 1
+            );
+            lobbyistCounts.set(
+              toNode.id,
+              (lobbyistCounts.get(toNode.id) || 0) + 1
+            );
+          }
+        });
+
+        const topFromMap = (map) =>
+          [...map.entries()]
+            .map(([id, count]) => ({
+              name: nodeById.get(id)?.fullName || nodeById.get(id)?.title || id,
+              count,
+            }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
+
+        renderTopList("topRegistrants", topFromMap(registrantCounts));
+        renderTopList("topClients", topFromMap(clientCounts));
+        renderTopList("topLobbyists", topFromMap(lobbyistCounts));
+
+        const topEdges = [...data.edges]
+          .map((edge) => ({
+            edge,
+            count: edge.count || 1,
+          }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5)
+          .map(({ edge, count }) => ({
+            name: `${
+              nodeById.get(edge.from)?.fullName ||
+              nodeById.get(edge.from)?.title ||
+              edge.from
+            } → ${
+              nodeById.get(edge.to)?.fullName ||
+              nodeById.get(edge.to)?.title ||
+              edge.to
+            } (${edge.label})`,
+            count: `${count} filings`,
+          }));
+
+        const topEdgesEl = document.getElementById("topEdges");
+        topEdgesEl.innerHTML = "";
+        if (!topEdges.length) {
+          topEdgesEl.innerHTML = "<li class=\"muted\">No data</li>";
+        } else {
+          topEdges.forEach((item) => {
+            const li = document.createElement("li");
+            li.textContent = `${item.name} • ${item.count}`;
+            topEdgesEl.appendChild(li);
+          });
+        }
+      }
+
+      function updateSummaryText(data) {
+        const mode = document.getElementById("mode").value;
+        const q = (document.getElementById("q").value || "").trim();
+        const year = (document.getElementById("year").value || "").trim();
+        const includeLobbyists = document.getElementById(
+          "includeLobbyists"
+        ).checked;
+
+        const modeLabel =
+          mode === "sample"
+            ? "Sample (latest filings)"
+            : mode === "entity"
+            ? "Entity search"
+            : "Topic search";
+
+        const querySummary =
+          mode === "sample"
+            ? "Latest filings sample"
+            : `Term: ${q || "—"}`;
+
+        const filters = [
+          year ? `Year: ${year}` : "All years",
+          includeLobbyists ? "Lobbyists shown" : "Lobbyists hidden",
+        ].join(" • ");
+
+        const filings = data.filings_matched ?? "?";
+
+        setSummary(
+          `<strong>${filings}</strong> filings loaded<br/>${modeLabel} • ${querySummary}<br/>${filters}`
+        );
       }
 
       async function loadGraph() {
@@ -258,40 +615,74 @@
           return;
         }
 
-        nodesDS = new vis.DataSet(data.nodes || []);
-        edgesDS = new vis.DataSet(data.edges || []);
+        const normalizedNodes = (data.nodes || []).map((node) => ({
+          ...node,
+          fullName: node.title || node.label,
+        }));
 
-        network = new vis.Network(
-          document.getElementById("network"),
-          { nodes: nodesDS, edges: edgesDS },
-          visOptions()
-        );
+        rawData = {
+          nodes: normalizedNodes,
+          edges: data.edges || [],
+          filings_matched: data.filings_matched ?? 0,
+        };
 
-        network.once("stabilizationIterationsDone", () => {
-          network.fit({ animation: { duration: 350 } });
-          network.setOptions({ physics: false });
-        });
-
-        network.on("click", (params) => {
-          if (params.nodes.length) applyDim(params.nodes[0]);
-          else resetDim();
-        });
-
-        network.on("zoom", () => {
-          const scale = network.getScale();
-          network.setOptions({
-            nodes: { font: { size: scale > 0.9 ? 14 : 0 } },
-          });
-        });
+        updateSummaryText(rawData);
+        updateInsights(rawData);
+        applyFilters();
 
         setMeta(
-          `Loaded ${nodesDS.length} nodes, ${
-            edgesDS.length
-          } edges. Filings matched: ${data.filings_matched ?? "?"}`
+          `Loaded ${rawData.nodes.length} nodes, ${
+            rawData.edges.length
+          } edges. Filings matched: ${rawData.filings_matched ?? "?"}`
         );
       }
 
       document.getElementById("go").addEventListener("click", loadGraph);
+      document
+        .getElementById("resetView")
+        .addEventListener("click", () => {
+          resetDim();
+          if (network) network.fit({ animation: { duration: 300 } });
+        });
+
+      document
+        .getElementById("downloadPng")
+        .addEventListener("click", () => {
+          if (!network) return;
+          const canvas = network.canvas.frame.canvas;
+          const link = document.createElement("a");
+          link.href = canvas.toDataURL("image/png");
+          link.download = "vigilmini-graph.png";
+          link.click();
+        });
+
+      document.getElementById("findBtn").addEventListener("click", () => {
+        const value = (document.getElementById("findNode").value || "")
+          .trim()
+          .toLowerCase();
+        if (!value || !nodesDS || !network) return;
+        const match = nodesDS
+          .get()
+          .find((node) =>
+            (node.fullName || node.label || "")
+              .toLowerCase()
+              .includes(value)
+          );
+        if (match) {
+          applyDim(match.id);
+        }
+      });
+
+      document.getElementById("findNode").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          document.getElementById("findBtn").click();
+        }
+      });
+
+      ["minFilings", "hideLeaf", "topN", "includeLobbyists"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", applyFilters);
+      });
 
       document.getElementById("mode").addEventListener("change", () => {
         document.getElementById("q").disabled =
