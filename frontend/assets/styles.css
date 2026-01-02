@@ -28,7 +28,7 @@ a:hover { text-decoration: underline; }
 .container {
   max-width: var(--max);
   margin: 0 auto;
-  padding: 28px 18px;
+  padding: 24px 18px;
 }
 
 .navbar {
@@ -151,7 +151,7 @@ a:hover { text-decoration: underline; }
 
 
 .hero {
-  padding: 36px 0 10px 0;
+  padding: 12px 0 10px 0;
 }
 
 .hero h1 {
